@@ -2,6 +2,10 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
+// imgui
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
 // gl
 #include "glad/glad.h"
 #include "GLFW/glfw3.h"
@@ -15,6 +19,14 @@ using namespace std;
 // const
 const int gWindowWidth = 800;
 const int gWindowHeight = 200;
+// gaussian blur const
+const int compareW = 1920;
+const int compareH = 1080;
+const float max_scale = 4.0f; // 2^max_scale
+const int minBlurLevel = 0;
+const int maxBlurLevel = 100;
+static int BlurLevel = 0;
+
 GLfloat gTriangles[] =
 {
 	-1.0f, -1.0f, 1.0f, 0.0f, 0.0f,
@@ -28,8 +40,15 @@ GLuint gTriangleVAO = 0;
 GLuint gTriangleVBO = 0;
 GLuint gTex = 0;
 GLuint gShowShader = 0;
+GLuint gGaussianBlurShader = 0;
 double gTime = 0;
+GLuint gFbo = 0;
+GLuint gDownSampleTex = 0;
+GLuint gGaussianBlurHTex = 0;
+GLuint gGaussianBlurVTex = 0;
+// image info
 int gImageWidth = 0, gImageHeight = 0, gImageChannels = 0;
+int gImageScaleWidth = 0, gImageScaleHeight = 0;
 
 // callback fun
 void FramebufferSizeCallback(GLFWwindow *window, int w, int h);
@@ -40,9 +59,14 @@ GLuint InitProgram(string vertexShaderSource, string fragShaderSource);
 GLuint InitShader(string shaderSource, GLenum shaderType);
 string ReadFile(string filePath);
 void InitTriangle();
-void InitTexture();
+void LoadImage();
+void UpdateGaussianBlurTexture();
+GLuint Create2DTexture(GLint format, int w, int h, unsigned char* data = nullptr);
+void Delete2DTexture(GLuint& tex);
 void InitGL();
 void DrawScene(GLFWwindow *window);
+void CalculateScaleWH(int rawW, int rawH);
+void BlurFactory(int phase, GLuint inputTex, GLuint outputTex);
 
 // callback
 void FramebufferSizeCallback(GLFWwindow* window, int w, int h)
@@ -73,6 +97,7 @@ int main()
 		return -1;
 	}
 	glfwMakeContextCurrent(window);
+	glfwSwapInterval(0);
 
 	// registe callback
 	glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
@@ -84,12 +109,28 @@ int main()
 		return -1;
 	}
 
+	// Setup Dear ImGui context
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
+	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;   // Enable Gamepad Controls
+
+	// Setup Dear ImGui style
+	ImGui::StyleColorsDark();
+	//ImGui::StyleColorsClassic();
+
+	// Setup Platform/Renderer bindings
+	ImGui_ImplGlfw_InitForOpenGL(window, true);
+	const char* glsl_version = "#version 330 core";
+	ImGui_ImplOpenGL3_Init(glsl_version);
+
 	InitGL();
 
 	while (!glfwWindowShouldClose(window))
 	{
 		char windowTitle[50];
-		sprintf_s(windowTitle, "FastGaussianBlurCPU: %.3f ms", gTime);
+		sprintf_s(windowTitle, "FastGaussianBlurCPU: %.4f ms", gTime);
 		glfwSetWindowTitle(window, windowTitle);
 
 		// event
@@ -112,16 +153,27 @@ int main()
 		gTriangleVBO = 0;
 	}
 
-	if (glIsTexture(gTex))
+	Delete2DTexture(gTex);
+	Delete2DTexture(gDownSampleTex);
+	Delete2DTexture(gGaussianBlurHTex);
+	Delete2DTexture(gGaussianBlurVTex);
+
+	if (glIsFramebuffer(gFbo))
 	{
-		glDeleteTextures(1, &gTex);
-		gTex = 0;
+		glDeleteFramebuffers(1, &gFbo);
+		gFbo = 0;
 	}
 
 	if (gShowShader)
 	{
 		glDeleteProgram(gShowShader);
 		gShowShader = 0;
+	}
+
+	if (gGaussianBlurShader)
+	{
+		glDeleteProgram(gGaussianBlurShader);
+		gGaussianBlurShader = 0;
 	}
 
 	// release glfw
@@ -203,11 +255,121 @@ string ReadFile(string filePath) {
 void InitGL()
 {
 	gShowShader = InitProgram(ReadFile("../Shader/Show.vs"), ReadFile("../Shader/Show.fs"));
+	gGaussianBlurShader = InitProgram(ReadFile("../Shader/Show.vs"), ReadFile("../Shader/GaussianBlur.fs"));
 	InitTriangle();
-	InitTexture();
+	LoadImage();
+}
+GLuint Create2DTexture(GLint format, int w, int h, unsigned char* data)
+{
+	GLuint tex = 0;
+	glGenTextures(1, &tex);
+	glBindTexture(GL_TEXTURE_2D, tex);
+	glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, format, GL_UNSIGNED_BYTE, data);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	return tex;
+}
+void Delete2DTexture(GLuint& tex)
+{
+	if (glIsTexture(tex))
+	{
+		glDeleteTextures(1, &tex);
+		tex = 0;
+	}
+}
+
+void UpdateGaussianBlurTexture()
+{
+	Delete2DTexture(gDownSampleTex);
+	Delete2DTexture(gGaussianBlurHTex);
+	Delete2DTexture(gGaussianBlurVTex);
+	gDownSampleTex = Create2DTexture(GL_RGBA, gImageScaleWidth, gImageScaleHeight);
+	gGaussianBlurHTex = Create2DTexture(GL_RGBA, gImageScaleWidth, gImageScaleHeight);
+	gGaussianBlurVTex = Create2DTexture(GL_RGBA, gImageScaleWidth, gImageScaleHeight);
+}
+
+void CalculateScaleWH(int rawW, int rawH)
+{
+	float shrinkFactor = 1.0f;
+	if (rawW > compareW || rawH > compareH)
+	{
+		float wFactor = static_cast<float>(rawW) / static_cast<float>(compareW);
+		float hFactor = static_cast<float>(rawH) / static_cast<float>(compareH);
+		shrinkFactor = wFactor > hFactor ? wFactor : hFactor;
+	}
+	float weightFactor = pow(2, static_cast<float>(BlurLevel) / maxBlurLevel * max_scale);
+	int scaleW = static_cast<float>(rawW) / (shrinkFactor * weightFactor);
+	int scaleH = static_cast<float>(rawH) / (shrinkFactor * weightFactor);
+
+	if (gImageScaleWidth != scaleW || gImageScaleHeight != scaleH)
+	{
+		gImageScaleWidth = scaleW;
+		gImageScaleHeight = scaleH;
+		cout << "Scale = " << gImageScaleWidth << "x" << gImageScaleHeight << endl;
+
+		UpdateGaussianBlurTexture();
+	}
+}
+void BlurFactory(int phase, GLuint inputTex, GLuint outputTex)
+{
+	if (!gFbo)
+		glGenFramebuffers(1, &gFbo);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, gFbo);
+
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, outputTex, 0);
+	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+		cout << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << endl;
+
+	glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT);
+	glViewport(0, 0, gImageScaleWidth, gImageScaleHeight);
+
+	glUseProgram(gGaussianBlurShader);
+	glUniform1i(glGetUniformLocation(gGaussianBlurShader, "phase"), phase);
+	glUniform1i(glGetUniformLocation(gGaussianBlurShader, "radius"), BlurLevel);
+	glUniform1f(glGetUniformLocation(gGaussianBlurShader, "width"), static_cast<float>(gImageScaleWidth));
+	glUniform1f(glGetUniformLocation(gGaussianBlurShader, "height"), static_cast<float>(gImageScaleHeight));
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, inputTex);
+	glUniform1i(glGetUniformLocation(gGaussianBlurShader, "tex"), 0);
+
+	glBindVertexArray(gTriangleVAO);
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 void DrawScene(GLFWwindow *window)
 {
+	ImGui_ImplOpenGL3_NewFrame();
+	ImGui_ImplGlfw_NewFrame();
+	ImGui::NewFrame();
+
+	ImGui::Begin("Properties");
+	ImGui::SliderInt("BlurLevel", &BlurLevel, minBlurLevel, maxBlurLevel, "%.3f");
+	ImGui::End();
+
+	double firstTime = glfwGetTime();
+
+	CalculateScaleWH(gImageWidth, gImageHeight);
+
+	int phase = 0;
+	GLuint srcTex = gTex;
+	if (BlurLevel > 0)
+	{
+		// ÏÂ²ÉÑù
+		BlurFactory(0, gTex, gDownSampleTex);
+		// H
+		BlurFactory(1, gDownSampleTex, gGaussianBlurHTex);
+		// V
+		BlurFactory(2, gGaussianBlurHTex, gGaussianBlurVTex);
+		// output
+		srcTex = gGaussianBlurVTex;
+	}
+	
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
@@ -215,34 +377,31 @@ void DrawScene(GLFWwindow *window)
 	glViewport(0, 0, gWindowWidth, gWindowHeight);
 	glUseProgram(gShowShader);
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, gTex);
+	glBindTexture(GL_TEXTURE_2D, srcTex);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
+
+	ImGui::Render();
+	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
 	glfwSwapBuffers(window);
+
+	double secondTime = glfwGetTime();
+	gTime = secondTime - firstTime;
 }
 
-void InitTexture()
+void LoadImage()
 {
-	glGenTextures(1, &gTex);
-	glBindTexture(GL_TEXTURE_2D, gTex);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	stbi_set_flip_vertically_on_load(true);
 	unsigned char *data = stbi_load("../images/800x200.png", &gImageWidth, &gImageHeight, &gImageChannels, 0);
-
+	GLint format = GL_RGBA;
 	if (data)
 	{
-		GLint format = 0;
-		if (gImageChannels == 4)
-			format = GL_RGBA;
 		if (gImageChannels == 3)
 			format = GL_RGB;
 
-		glTexImage2D(GL_TEXTURE_2D, 0, format, gImageWidth, gImageHeight, 0, format, GL_UNSIGNED_BYTE, data);
+		gTex = Create2DTexture(format, gImageWidth, gImageHeight, data);
 		stbi_image_free(data);
 	}
 	else
 		cout << "Failed to load texture" << endl;
-	glBindTexture(GL_TEXTURE_2D, 0);
 }

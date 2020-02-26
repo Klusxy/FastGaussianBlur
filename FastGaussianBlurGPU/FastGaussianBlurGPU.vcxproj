@@ -88,7 +88,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>../3rd/glad/include;../3rd/glfw-3.2.1.bin.WIN32/include;../3rd/glm;../3rd/stdImage;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../3rd/glad/include;../3rd/glfw-3.2.1.bin.WIN32/include;../3rd/glm;../3rd/stdImage;../3rd/imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -145,8 +145,24 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\3rd\imgui\imgui.cpp" />
+    <ClCompile Include="..\3rd\imgui\imgui_demo.cpp" />
+    <ClCompile Include="..\3rd\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\3rd\imgui\imgui_impl_glfw.cpp" />
+    <ClCompile Include="..\3rd\imgui\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="..\3rd\imgui\imgui_widgets.cpp" />
     <ClCompile Include="..\Common\glad.c" />
     <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\3rd\imgui\imconfig.h" />
+    <ClInclude Include="..\3rd\imgui\imgui.h" />
+    <ClInclude Include="..\3rd\imgui\imgui_impl_glfw.h" />
+    <ClInclude Include="..\3rd\imgui\imgui_impl_opengl3.h" />
+    <ClInclude Include="..\3rd\imgui\imgui_internal.h" />
+    <ClInclude Include="..\3rd\imgui\imstb_rectpack.h" />
+    <ClInclude Include="..\3rd\imgui\imstb_textedit.h" />
+    <ClInclude Include="..\3rd\imgui\imstb_truetype.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
