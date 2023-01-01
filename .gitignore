@@ -1,3 +1,7 @@
+# VS
+.vs
+*.user
+
 # Prerequisites
 *.d
 
