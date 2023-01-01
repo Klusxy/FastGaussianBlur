@@ -1,5 +1,5 @@
 # Fast Gaussian Blur
-实时高斯模糊， CPU算法4为Adobe Photoshop的实现方案
+实时高斯模糊， CPU算法4为Photopea的实现方案
 * 原图
 <div>
   <img src="./Images/800x200.png" width="800px"/> 
@@ -28,9 +28,6 @@ Demo中给出了4种算法的实现，窗口标题为算法所耗时间
 </div>
 
 ## GPU方案
-T.T gif录出来的效果太差了. 有前辈知道好用的gif录制工具还请告知。
-
-这个gif是拿GifCam录的。Screen2Gif也试过了。。还没这个效果好。。
 <div>
   <img src="./Images/GPU/blurGPU.gif" width="800px"/> 
 </div>
