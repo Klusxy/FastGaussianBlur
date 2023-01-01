@@ -1,6 +1,7 @@
 # VS
 .vs
 *.user
+*.db
 
 # Prerequisites
 *.d
