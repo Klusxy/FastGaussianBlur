@@ -2,6 +2,7 @@
 .vs
 *.user
 *.db
+x64
 
 # Prerequisites
 *.d
